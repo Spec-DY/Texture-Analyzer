@@ -31,7 +31,7 @@ class TextureClassifier:
         images = []
         labels = []
 
-        # 计算总图片数以设置进度条
+        # calculate total number of images for progress bar
         total_images = sum(len(os.listdir(os.path.join(data_path, class_name)))
                            for class_name in self.classes)
 
