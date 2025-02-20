@@ -14,6 +14,11 @@ from tqdm import tqdm
 
 class TextureClassifier:
     def __init__(self):
+        """
+        Initialize the TextureClassifier with a standard scaler,
+        two RandomForest classifiers (one for GLCM features and one for LBP features),
+        and define the class labels.
+        """
         self.scaler = StandardScaler()
         self.glcm_classifier = RandomForestClassifier(
             n_estimators=100, random_state=42)
@@ -22,16 +27,35 @@ class TextureClassifier:
         self.classes = ['bricks', 'stone', 'wood']
 
     def preprocess_image(self, img):
+        """
+        Preprocess the input image by applying histogram equalization and Gaussian blur.
+
+        Args:
+            img (ndarray): Grayscale image.
+
+        Returns:
+            ndarray: Preprocessed image.
+        """
         img = exposure.equalize_hist(img)
         img = (img * 255).astype(np.uint8)
         img = cv2.GaussianBlur(img, (3, 3), 0)
         return img
 
     def load_dataset(self, data_path):
+        """
+        Load and augment the dataset from the given directory. Images are resized,
+        preprocessed, rotated by multiple angles, and horizontally flipped.
+
+        Args:
+            data_path (str): Path to the dataset directory.
+
+        Returns:
+            tuple: (images, labels) as numpy arrays.
+        """
         images = []
         labels = []
 
-        # calculate total number of images for progress bar
+        # Calculate total number of images for the progress bar
         total_images = sum(len(os.listdir(os.path.join(data_path, class_name)))
                            for class_name in self.classes)
 
@@ -63,6 +87,7 @@ class TextureClassifier:
                             images.append(img)
                             labels.append(class_idx)
 
+                    # Horizontal flip augmentation
                     flipped = cv2.flip(img, 1)
                     images.append(flipped)
                     labels.append(class_idx)
@@ -80,6 +105,15 @@ class TextureClassifier:
         return np.array(images), np.array(labels)
 
     def extract_glcm_features(self, image):
+        """
+        Extract GLCM features from the input image using multiple distances and angles.
+
+        Args:
+            image (ndarray): Preprocessed grayscale image.
+
+        Returns:
+            ndarray: Feature vector containing GLCM properties.
+        """
         distances = [1, 2, 3, 4]
         angles = [0, np.pi/4, np.pi/2, 3*np.pi/4]
         features = []
@@ -87,7 +121,6 @@ class TextureClassifier:
         for distance in distances:
             glcm = graycomatrix(
                 image, [distance], angles, 256, symmetric=True, normed=True)
-
             features.extend([
                 graycoprops(glcm, 'contrast').mean(),
                 graycoprops(glcm, 'dissimilarity').mean(),
@@ -100,12 +133,18 @@ class TextureClassifier:
         return np.array(features)
 
     def extract_lbp_features(self, image):
+        """
+        Extract LBP features by applying the LBP operator with different configurations
+        and generating histograms of LBP codes.
+
+        Args:
+            image (ndarray): Preprocessed grayscale image.
+
+        Returns:
+            ndarray: Feature vector containing concatenated LBP histograms.
+        """
         features = []
-        configs = [
-            (1, 8),
-            (2, 16),
-            (3, 24)
-        ]
+        configs = [(1, 8), (2, 16), (3, 24)]
 
         for radius, n_points in configs:
             lbp = local_binary_pattern(
@@ -117,18 +156,37 @@ class TextureClassifier:
         return np.array(features)
 
     def prepare_features(self, images, feature_type='glcm'):
+        """
+        Prepare feature vectors for a list of images using the specified feature extraction method.
+
+        Args:
+            images (ndarray): Array of images.
+            feature_type (str): Type of features to extract ('glcm' or 'lbp').
+
+        Returns:
+            ndarray: Array of feature vectors.
+        """
         features = []
         desc = "Extracting GLCM features" if feature_type == 'glcm' else "Extracting LBP features"
 
         for img in tqdm(images, desc=desc):
             if feature_type == 'glcm':
                 feat = self.extract_glcm_features(img)
-            else:  # lbp
+            else:
                 feat = self.extract_lbp_features(img)
             features.append(feat)
         return np.array(features)
 
     def train(self, data_path):
+        """
+        Train the texture classifiers using the dataset located at data_path.
+        The function loads the dataset, performs augmentation, splits the data,
+        extracts features, scales them, performs grid search for parameter tuning,
+        and evaluates the classifiers.
+
+        Args:
+            data_path (str): Path to the dataset directory.
+        """
         images, labels = self.load_dataset(data_path)
         print(f"\nTotal images after augmentation: {len(images)}")
 
@@ -183,13 +241,22 @@ class TextureClassifier:
         print(f"GLCM Accuracy: {glcm_accuracy:.3f}")
         print(f"LBP Accuracy: {lbp_accuracy:.3f}")
         print("\nBest parameters for GLCM classifier:", grid_search.best_params_)
-
         print("\nGLCM Confusion Matrix:")
         print(confusion_matrix(y_test, glcm_predictions))
         print("\nLBP Confusion Matrix:")
         print(confusion_matrix(y_test, lbp_predictions))
 
     def predict(self, img_path, method='glcm'):
+        """
+        Predict the texture class of an image using the specified feature extraction method.
+
+        Args:
+            img_path (str): Path to the input image.
+            method (str): Feature extraction method to use ('glcm' or 'lbp').
+
+        Returns:
+            dict: Dictionary containing the predicted class and class probabilities.
+        """
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError("Failed to load image")
@@ -203,20 +270,39 @@ class TextureClassifier:
             probabilities = self.glcm_classifier.predict_proba(features_scaled)[
                 0]
             prediction = self.glcm_classifier.predict(features_scaled)[0]
-        else:  # lbp
+        else:
             features = self.extract_lbp_features(img)
             probabilities = self.lbp_classifier.predict_proba([features])[0]
             prediction = self.lbp_classifier.predict([features])[0]
 
-        result = {
+        return {
             'prediction': self.classes[prediction],
             'probabilities': {cls: prob for cls, prob in zip(self.classes, probabilities)}
         }
-        return result
 
 
 def create_gradio_interface(classifier):
+    """
+    Create a Gradio interface for the texture classifier.
+    Allows users to upload an image and select the feature extraction method.
+
+    Args:
+        classifier (TextureClassifier): The trained texture classifier.
+
+    Returns:
+        gr.Interface: Configured Gradio interface.
+    """
     def classify_texture(image, method):
+        """
+        Classify an uploaded image and return the prediction, confidence, and probabilities.
+
+        Args:
+            image (ndarray): Uploaded image.
+            method (str): Chosen feature extraction method ('glcm' or 'lbp').
+
+        Returns:
+            tuple: Predicted class, confidence value, and class probabilities.
+        """
         temp_path = "temp_image.jpg"
         cv2.imwrite(temp_path, image)
 
@@ -225,12 +311,7 @@ def create_gradio_interface(classifier):
             prediction = result['prediction']
             probs = result['probabilities']
             confidence = max(probs.values())
-
-            return (
-                prediction,
-                confidence,
-                probs
-            )
+            return prediction, confidence, probs
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -238,7 +319,8 @@ def create_gradio_interface(classifier):
     interface = gr.Interface(
         fn=classify_texture,
         inputs=[
-            gr.Image(),
+            gr.Image(),  # Image upload
+            # Feature extraction method selection
             gr.Radio(["glcm", "lbp"], label="Method", value="glcm")
         ],
         outputs=[
@@ -255,7 +337,8 @@ def create_gradio_interface(classifier):
 
 if __name__ == "__main__":
     classifier = TextureClassifier()
-    classifier.train("data")
+    classifier.train("data")  # Train using images from data directory
 
-    interface = create_gradio_interface(classifier)
+    interface = create_gradio_interface(
+        classifier)  # Create Gradio interface
     interface.launch(share=True)
